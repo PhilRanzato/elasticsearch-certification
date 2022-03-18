@@ -2,7 +2,9 @@
 
 Define an index that satisfies a given set of requirements
 
-## Create Index
+## Exercise 1
+
+***Create, update and delete indices while satisfying a given set of requirements***
 
 Exercises from https://medium.com/kreuzwerker-gmbh/exercises-for-the-elastic-certified-engineer-exam-store-data-into-elasticsearch-cbce230bcc6
 
@@ -236,3 +238,234 @@ POST hamlet/_delete_by_query
 }
 ```
 
+# Exercise 2
+
+***Create index templates that satisfy a given set of requirements***
+
+
+Create the index template `hamlet_template`, so that the template 
+- matches any index that starts by "hamlet_" or "hamlet-"
+- allocates one primary shard and no replicas for each matching index 
+
+```
+# LEGACY INDEX TEMPLATE
+PUT _template/hamlet_template
+{
+  "index_patterns": ["hamlet_*", "hamlet-*"],
+  "settings": {
+    "number_of_shards": 1,
+    "number_of_replicas": 0
+  }
+}
+# COMPOSABLE INDEX TEMPLATE
+PUT _component_template/component_template_date
+{
+  "template": {
+    "mappings": {
+      "properties": {
+        "@timestamp": {
+          "type": "date"
+        }
+      }
+    }
+  }
+}
+PUT _index_template/hamlet_template
+{
+  "index_patterns": ["hamlet_*", "hamlet-*"],
+  "template": {
+    "settings": {
+        "number_of_shards": 1,
+        "number_of_replicas": 0
+    }
+  },
+  "composed_of": ["component_template_date"]
+}
+```
+
+
+Create the indices `hamlet2` and `hamlet_test`.Verify that only `hamlet_test` applies the settings defined in `hamlet_template`
+
+```
+PUT hamlet2
+PUT hamlet_test
+```
+
+Update `hamlet_template` by defining a mapping for the type "_doc", so that
+- the type has three fields, named `speaker`, `line_number`, and `text_entry`
+- `text_entry` uses an "english" analyzer
+
+```
+PUT _component_template/component_template_hamlet
+{
+  "template": {
+    "mappings": {
+      "properties": {
+        "speaker": {
+          "type": "text"
+        },
+        "line_number": {
+          "type": "text"
+        },
+        "text_entry": {
+          "type": "text",
+          "analyzer": "english"
+        }        
+      }
+    }
+  }
+}
+PUT _index_template/hamlet_template
+{
+  "index_patterns": ["hamlet_*", "hamlet-*"],
+  "template": {
+    "settings": {
+        "number_of_shards": 1,
+        "number_of_replicas": 0
+    }
+  },
+  "composed_of": ["component_template_date", "component_template_hamlet"]
+}
+```
+
+Verify that the updates in `hamlet_template` did not apply to the existing indices and in one request, delete both `hamlet2` and `hamlet_test`
+
+```
+GET hamlet2/_mapping
+GET hamlet_test/_mapping
+DELETE /hamlet2,hamlet_test
+```
+
+Create the index `hamlet-1` and add some documents by running the following _bulk command
+
+```
+PUT hamlet-1/_doc/_bulk
+{"index":{"_index":"hamlet-1","_id":0}}
+{"line_number":"1.1.1","speaker":"BERNARDO","text_entry":"Whos there?"}
+{"index":{"_index":"hamlet-1","_id":1}}
+{"line_number":"1.1.2","speaker":"FRANCISCO","text_entry":"Nay, answer me: stand, and unfold yourself."}
+{"index":{"_index":"hamlet-1","_id":2}}
+{"line_number":"1.1.3","speaker":"BERNARDO","text_entry":"Long live the king!"}
+{"index":{"_index":"hamlet-1","_id":3}}
+{"line_number":"1.2.1","speaker":"KING CLAUDIUS","text_entry":"Though yet of Hamlet our dear brothers death"}
+```
+
+Verify that the mapping of `hamlet-1` is consistent with what defined in `hamlet_template`
+
+```
+GET hamlet-1/_mapping
+```
+
+Update `hamlet_template` so as to reject any document having a field that is not defined in the mapping 
+
+```
+DELETE hamlet-1
+PUT _component_template/component_template_static
+{
+  "template": {
+    "mappings": {
+        "dynamic": "strict"
+    }
+  }
+}
+PUT _index_template/hamlet_template
+{
+  "index_patterns": ["hamlet_*", "hamlet-*"],
+  "template": {
+    "settings": {
+        "number_of_shards": 1,
+        "number_of_replicas": 0
+    }
+  },
+  "composed_of": ["component_template_date", "component_template_hamlet", "component_template_static"]
+}
+```
+
+Verify that you cannot index the following document in `hamlet-1` 
+
+```
+PUT hamlet-1/_doc 
+{ 
+  "author": "Shakespeare" 
+} 
+```
+
+Update `hamlet_template` so as to enable dynamic mapping again
+
+```
+PUT _component_template/component_template_dynamic
+{
+  "template": {
+    "mappings": {
+        "dynamic": true
+    }
+  }
+}
+PUT _index_template/hamlet_template
+{
+  "index_patterns": ["hamlet_*", "hamlet-*"],
+  "template": {
+    "settings": {
+        "number_of_shards": 1,
+        "number_of_replicas": 0
+    }
+  },
+  "composed_of": ["component_template_date", "component_template_hamlet", "component_template_dynamic"]
+}
+```
+
+Update `hamlet_template` so as to
+- dynamically map to an integer any field that starts by "number_"
+- dynamically map to unanalysed text any string field
+
+```
+PUT _component_template/component_template_custom_dynamic
+{
+  "template": {
+    "mappings": {
+        "dynamic_templates": [
+          {
+            "int_number": {
+                "match_mapping_type": "string",
+                "match": "number_*",
+                "runtime": {
+                    "type": "integer"
+                }
+            }
+          },{
+            "string_unanalysed": {
+                "match_mapping_type": "string",
+                "runtime": {
+                    "type": "text"
+                }
+            }
+          }
+        ]
+    }
+  }
+}
+PUT _index_template/hamlet_template
+{
+  "index_patterns": ["hamlet_*", "hamlet-*"],
+  "template": {
+    "settings": {
+        "number_of_shards": 1,
+        "number_of_replicas": 0
+    }
+  },
+  "composed_of": ["component_template_date", "component_template_hamlet", "component_template_dynamic", "component_template_custom_dynamic"]
+}
+```
+
+Add the following and verify that `hamlet-2` is consistent with the template
+
+```
+POST hamlet-2/_doc/4
+{
+  "text_entry": "With turbulent and dangerous lunacy?",
+  "line_number": "3.1.4",
+  "number_act": "3",
+  "speaker": "KING CLAUDIUS"
+}
+GET hamlet-2/_mapping
+```
